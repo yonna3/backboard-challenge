@@ -3,42 +3,53 @@ import os
 import dotenv
 from backboard import BackboardClient
 
-# Load variables from the .env file
 dotenv.load_dotenv()
 
 async def main():
-    # Fixed: Changed get_env to getenv
     api_key = os.getenv("BACKBOARD_API_KEY")
-    
-    if not api_key:
-        print("❌ Error: BACKBOARD_API_KEY not found in .env file!")
-        return
-
     client = BackboardClient(api_key=api_key)
 
-    try:
-        # --- Step 1: Create an Assistant ---
-        assistant = await client.create_assistant(
-            name="My First Assistant",
-            system_prompt="You are a helpful assistant that responds concisely."
-        )
-        print(f"✅ Created assistant: {assistant.assistant_id}")
+    # 1. Create a specialized Assistant
+    assistant = await client.create_assistant(
+        name="Document Assistant",
+        system_prompt="You are a helpful document analysis assistant. Answer questions based ONLY on the provided document."
+    )
 
-        # --- Step 2: Create a Thread ---
-        thread = await client.create_thread(assistant_id=assistant.assistant_id)
-        print(f"✅ Created thread: {thread.thread_id}")
+    # 2. Upload the PDF (Make sure 'my_document.pdf' is in your folder!)
+    # This sends the file to Backboard to be "read" and "indexed"
+    document = await client.upload_document_to_assistant(
+        assistant.assistant_id,
+        "my_document.pdf"
+    )
+    print("Waiting for document to be indexed...")
 
-        # --- Step 3: Send a Message (Non-Streaming) ---
-        print("Sending message...")
-        response = await client.add_message(
-            thread_id=thread.thread_id,
-            content="say Hello World",
-            stream=False
-        )
-        print(f"🤖 Assistant: {response.content}")
+    # 3. Wait for the AI to finish "reading" the file
+    while True:
+        status = await client.get_document_status(document.document_id)
+        if status.status == "indexed":
+            print("✅ Document indexed successfully!")
+            break
+        elif status.status == "failed":
+            print(f"❌ Document indexing failed: {status.status_message}")
+            return
+        await asyncio.sleep(2)
 
-    except Exception as e:
-        print(f"❌ An error occurred: {e}")
+    # 4. Start the conversation
+    thread = await client.create_thread(assistant_id=assistant.assistant_id)
+    
+    print("🤖 Assistant is thinking...")
+    
+    # 5. Ask the question with Streaming enabled
+    async for chunk in await client.add_message(
+        thread_id=thread.thread_id,
+        content="What are the key points in the uploaded document?",
+        stream=True
+    ):
+        if chunk.get("type") == "content_streaming":
+            content = chunk.get("content", "")
+            if content:
+                print(content, end="", flush=True)
+    print("\n")
 
 if __name__ == "__main__":
     asyncio.run(main())
